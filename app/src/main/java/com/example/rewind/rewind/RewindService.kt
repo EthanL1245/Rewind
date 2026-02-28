@@ -22,9 +22,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 class RewindService : Service() {
 
     private val sampleRate = 16000
-    private val secondsInBuffer = 30
-    private val bytesPerSample = 2 // PCM 16-bit
-    private val ringSizeBytes = sampleRate * secondsInBuffer * bytesPerSample
+    private val maxSecondsInBuffer = 120   // ring holds up to 2 minutes
+    private val bytesPerSample = 2         // PCM 16-bit
+    private val ringSizeBytes = sampleRate * maxSecondsInBuffer * bytesPerSample
 
     private var ring = ByteArray(ringSizeBytes)
     private var writePos = 0
@@ -33,8 +33,14 @@ class RewindService : Service() {
     private var recordThread: Thread? = null
     private val isRecording = AtomicBoolean(false)
 
+    private var currentRewindSeconds = 30
+    private var stopPosted = false
+
     companion object {
         const val ACTION_REWIND = "com.example.rewind.ACTION_REWIND"
+        const val EXTRA_REWIND_SECONDS = "extra_rewind_seconds"
+        const val EXTRA_SESSION_SECONDS = "extra_session_seconds"
+        const val ACTION_STOP = "com.example.rewind.ACTION_STOP"
     }
 
     private fun startRecordingIfNeeded() {
@@ -102,24 +108,46 @@ class RewindService : Service() {
         }
     }
 
-    private fun snapshotRingChronological(): ByteArray {
-        // Oldest audio starts at writePos, newest ends right before writePos
-        val out = ByteArray(ring.size)
-        val tail = ring.size - writePos
-        System.arraycopy(ring, writePos, out, 0, tail)
-        System.arraycopy(ring, 0, out, tail, writePos)
+    private fun snapshotLastSeconds(seconds: Int): ByteArray {
+        val clamped = seconds.coerceIn(1, maxSecondsInBuffer)
+        val bytesToCopy = sampleRate * clamped * bytesPerSample
+
+        val out = ByteArray(bytesToCopy)
+
+        // newest audio ends right before writePos, so start = writePos - bytesToCopy (wrapped)
+        var start = writePos - bytesToCopy
+        while (start < 0) start += ring.size
+
+        val tail = ring.size - start
+        if (bytesToCopy <= tail) {
+            System.arraycopy(ring, start, out, 0, bytesToCopy)
+        } else {
+            System.arraycopy(ring, start, out, 0, tail)
+            System.arraycopy(ring, 0, out, tail, bytesToCopy - tail)
+        }
+
         return out
     }
 
-    private fun saveSnapshotAsWav(pcm: ByteArray) {
+    private fun saveSnapshotAsWav(pcm: ByteArray, secondsUsed: Int) {
         val dir = getExternalFilesDir(null) ?: filesDir
-        val file = File(dir, "rewind_${System.currentTimeMillis()}.wav")
+        val base = "rewind_${System.currentTimeMillis()}"
+        val wavFile = File(dir, "$base.wav")
+        val jsonFile = File(dir, "$base.json")
 
-        FileOutputStream(file).use { fos ->
-            fos.write(wavHeader(pcmDataLen = pcm.size, sampleRate = sampleRate, channels = 1, bitsPerSample = 16))
+        FileOutputStream(wavFile).use { fos ->
+            fos.write(wavHeader(pcm.size, sampleRate, 1, 16))
             fos.write(pcm)
             fos.flush()
         }
+
+        // store capsule metadata
+        val obj = org.json.JSONObject()
+        obj.put("seconds", secondsUsed)
+        val arr = org.json.JSONArray()
+        arr.put("Moment") // default tag
+        obj.put("tags", arr)
+        jsonFile.writeText(obj.toString())
     }
 
     private fun wavHeader(pcmDataLen: Int, sampleRate: Int, channels: Int, bitsPerSample: Int): ByteArray {
@@ -158,17 +186,40 @@ class RewindService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Start mic buffering for the session
+        if (intent?.action == ACTION_STOP) {
+            stopRecordingIfNeeded()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         startRecordingIfNeeded()
+
+        val rewindSeconds = intent?.getIntExtra(EXTRA_REWIND_SECONDS, 30) ?: 30
+        val sessionSeconds = intent?.getIntExtra(EXTRA_SESSION_SECONDS, 60 * 60) ?: (60 * 60)
+
+        // auto-stop timer (simple MVP)
+        if (!stopPosted) {
+            stopPosted = true
+            android.os.Handler(mainLooper).postDelayed({
+                stopRecordingIfNeeded()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                stopPosted = false
+            }, sessionSeconds * 1000L)
+        }
 
         // Handle notification action
         if (intent?.action == ACTION_REWIND) {
-            val pcm = snapshotRingChronological()
-            saveSnapshotAsWav(pcm)
+            val pcm = snapshotLastSeconds(rewindSeconds)
+            saveSnapshotAsWav(pcm, rewindSeconds)
             return START_STICKY
         }
 
-        val rewindIntent = Intent(this, RewindService::class.java).apply { action = ACTION_REWIND }
+        val rewindIntent = Intent(this, RewindService::class.java).apply {
+            action = ACTION_REWIND
+            putExtra(EXTRA_REWIND_SECONDS, rewindSeconds)
+        }
         val rewindPendingIntent = PendingIntent.getService(
             this,
             100,
