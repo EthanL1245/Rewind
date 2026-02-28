@@ -13,7 +13,6 @@ import androidx.core.app.NotificationManagerCompat
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
-import android.os.Environment
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
@@ -113,10 +112,7 @@ class RewindService : Service() {
     }
 
     private fun saveSnapshotAsWav(pcm: ByteArray) {
-        // Saves to the public Music/Rewind folder
-        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "Rewind")
-        if (!dir.exists()) dir.mkdirs()
-
+        val dir = getExternalFilesDir(null) ?: filesDir
         val file = File(dir, "rewind_${System.currentTimeMillis()}.wav")
 
         FileOutputStream(file).use { fos ->
