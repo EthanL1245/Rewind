@@ -8,8 +8,14 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.example.rewind.R
+import android.app.PendingIntent
+import androidx.core.app.NotificationManagerCompat
 
 class RewindService : Service() {
+
+    companion object {
+        const val ACTION_REWIND = "com.example.rewind.ACTION_REWIND"
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -25,11 +31,25 @@ class RewindService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_REWIND) {
+            // TODO: save last 30s buffer
+            return START_STICKY
+        }
+        val rewindIntent = Intent(this, RewindService::class.java).apply {
+            action = ACTION_REWIND
+        }
+        val rewindPendingIntent = PendingIntent.getService(
+            this,
+            100,
+            rewindIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
         val notification = NotificationCompat.Builder(this, "rewind")
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("REWIND running")
             .setContentText("Listening buffer active")
             .setOngoing(true)
+            .addAction(0, "REWIND", rewindPendingIntent)
             .build()
 
         startForeground(1, notification)
