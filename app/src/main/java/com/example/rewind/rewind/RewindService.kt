@@ -26,7 +26,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import com.example.rewind.BuildConfig
 
-private const val USE_GEMINI = false  // ← DEV MODE toggle
+private const val USE_GEMINI = true  // ← DEV MODE toggle
 
 class RewindService : Service() {
     private val serviceJob = SupervisorJob()

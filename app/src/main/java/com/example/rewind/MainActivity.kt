@@ -35,7 +35,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import androidx.compose.runtime.rememberCoroutineScope
 import java.util.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +49,22 @@ import com.google.api.client.json.gson.GsonFactory
 import com.google.api.services.drive.Drive
 import com.google.api.services.drive.DriveScopes
 import com.google.api.services.drive.model.FileList
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import com.example.rewind.ui.theme.*
+import androidx.compose.foundation.Image
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.border
+import androidx.compose.foundation.verticalScroll
+import android.util.Base64
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import java.io.ByteArrayOutputStream
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -169,88 +184,122 @@ private fun SetupScreen(
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+    RewindBackground {
         Column(
-            Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            Modifier
+                .fillMaxSize()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.Top,
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text("REWIND", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
-            Text("Pick a mode, set rewind length, start a timed session.")
-
-            Text("Mode", fontWeight = FontWeight.SemiBold)
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                presets.take(3).forEach { p -> // Lecture, Meeting, Walk
-                    FilterChip(
-                        selected = (p == selectedPreset),
-                        onClick = { selectedPreset = p },
-                        label = { Text(p.name) }
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // HEADER (logo-centered, tighter)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 6.dp, bottom = 6.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.rewind_logo),
+                        contentDescription = "Rewind",
+                        modifier = Modifier.size(200.dp)  // smaller + clean
                     )
                 }
-            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                presets.drop(3).forEach { p -> // Brainstorm
-                    FilterChip(
-                        selected = (p == selectedPreset),
-                        onClick = { selectedPreset = p },
-                        label = { Text(p.name) }
-                    )
-                }
-            }
-
-            val minutes = selectedPreset.sessionSeconds / 60
-            Text("Session length: ${minutes} min", fontWeight = FontWeight.SemiBold)
-
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Rewind length: ${rewindSeconds}s", fontWeight = FontWeight.SemiBold)
-                Slider(
-                    value = rewindSeconds.toFloat(),
-                    onValueChange = { rewindSeconds = it.toInt() },
-                    valueRange = 15f..120f,
-                    steps = (120 - 15) / 5 - 1 // snap ~every 5s
+                Text(
+                    "Pick a mode, set rewind length, start a timed session.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
                 )
-                Text("15s  •  2m", modifier = Modifier.align(Alignment.End))
-            }
 
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = {
-                    // notifications permission (Android 13+)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    }
+                Spacer(Modifier.height(5.dp))
+                Text("Mode", fontWeight = FontWeight.SemiBold)
 
-                    val hasMic = ContextCompat.checkSelfPermission(
-                        context, Manifest.permission.RECORD_AUDIO
-                    ) == PackageManager.PERMISSION_GRANTED
-
-                    if (hasMic) {
-                        val endAt = System.currentTimeMillis() + selectedPreset.sessionSeconds * 1000L
-                        saveActiveSession(context, endAt, selectedPreset.sessionSeconds, rewindSeconds)
-                        startRewindService(context, selectedPreset.sessionSeconds, rewindSeconds)
-                        onStart(selectedPreset.sessionSeconds, rewindSeconds)
-                    } else {
-                        micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    presets.take(3).forEach { p -> // Lecture, Meeting, Walk
+                        FilterChip(
+                            selected = (p == selectedPreset),
+                            onClick = { selectedPreset = p },
+                            label = { Text(p.name) }
+                        )
                     }
                 }
-            ) { Text("Start Session") }
 
-            Text(
-                "This runs a Foreground Service (visible notification) so Android allows ongoing mic buffering.",
-                style = MaterialTheme.typography.bodySmall
-            )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    presets.drop(3).forEach { p -> // Brainstorm
+                        FilterChip(
+                            selected = (p == selectedPreset),
+                            onClick = { selectedPreset = p },
+                            label = { Text(p.name) }
+                        )
+                    }
+                }
 
-            OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onViewCapsules
-            ) { Text("View Capsules") }
+                val minutes = selectedPreset.sessionSeconds / 60
+                Text("Session length: ${minutes} min", fontWeight = FontWeight.SemiBold)
+
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Rewind length: ${rewindSeconds}s", fontWeight = FontWeight.SemiBold)
+                    Slider(
+                        value = rewindSeconds.toFloat(),
+                        onValueChange = { rewindSeconds = it.toInt() },
+                        valueRange = 15f..120f,
+                        steps = (120 - 15) / 5 - 1 // snap ~every 5s
+                    )
+                    Text("15s  •  2m", modifier = Modifier.align(Alignment.End))
+                }
+
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        // notifications permission (Android 13+)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+
+                        val hasMic = ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+
+                        if (hasMic) {
+                            val endAt =
+                                System.currentTimeMillis() + selectedPreset.sessionSeconds * 1000L
+                            saveActiveSession(
+                                context,
+                                endAt,
+                                selectedPreset.sessionSeconds,
+                                rewindSeconds
+                            )
+                            startRewindService(
+                                context,
+                                selectedPreset.sessionSeconds,
+                                rewindSeconds
+                            )
+                            onStart(selectedPreset.sessionSeconds, rewindSeconds)
+                        } else {
+                            micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    }
+                ) { Text("Start Session") }
+
+                Text(
+                    "This runs a Foreground Service (visible notification) so Android allows ongoing mic buffering.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onViewCapsules
+                ) { Text("View Capsules") }
+            }
         }
     }
 }
@@ -287,46 +336,50 @@ private fun SessionScreen(
     val mins = (remainingMs / 1000) / 60
     val secs = (remainingMs / 1000) % 60
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(16.dp),
+    RewindBackground {
+        Column(
+            Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Text("Session Running", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
-            Text("Rewind length: ${rewindSeconds}s")
+            Column(
+                Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    "Session Running",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineSmall
+                )
+                Text("Rewind length: ${rewindSeconds}s")
 
-            Text(
-                text = String.format("Time left: %02d:%02d", mins, secs),
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.SemiBold
-            )
+                Text(
+                    text = String.format("Time left: %02d:%02d", mins, secs),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
 
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        stopRewindService(context)
-                        clearActiveSession(context)
-                        onBackToSetup()
-                    }
-                ) { Text("End Session") }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            stopRewindService(context)
+                            clearActiveSession(context)
+                            onBackToSetup()
+                        }
+                    ) { Text("End Session") }
 
-                OutlinedButton(
-                    modifier = Modifier.weight(1f),
-                    onClick = onViewCapsules
-                ) { Text("View Capsules") }
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = onViewCapsules
+                    ) { Text("View Capsules") }
+                }
+
+                Text(
+                    "Use the notification action “REWIND” anytime to save the last ${rewindSeconds}s into a capsule.",
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
-
-            Text(
-                "Use the notification action “REWIND” anytime to save the last ${rewindSeconds}s into a capsule.",
-                style = MaterialTheme.typography.bodySmall
-            )
         }
     }
 }
@@ -381,54 +434,90 @@ private fun CapsulesScreen(
         }
     }
 
-    Column(
-        Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Capsules (${capsules.size})", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = { capsules = loadCapsulesWithMeta(context) }) { Text("Refresh") }
-            Spacer(Modifier.width(8.dp))
-            OutlinedButton(onClick = onBack) { Text("Back") }
-        }
-
-        OutlinedButton(onClick = {
-            val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                .requestEmail()
-                .requestScopes(Scope(DriveScopes.DRIVE_FILE))
-                .build()
-
-            val client = GoogleSignIn.getClient(context, gso)
-            signInLauncher.launch(client.signInIntent)
-        }) { Text("Archive + Clear") }
-
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(capsules, key = { it.audioFile.name }) { cap ->
-                CapsuleCard(
-                    cap = cap,
-                    onPlay = {
-                        player?.stop(); player?.release(); player = null
-                        player = MediaPlayer().apply {
-                            setDataSource(cap.audioFile.absolutePath)
-                            setOnPreparedListener { it.start() }
-                            setOnCompletionListener { mp -> mp.release(); player = null }
-                            prepareAsync()
-                        }
-                    },
-                    onDelete = {
-                        deleteCapsule(cap.audioFile)
-                        capsules = loadCapsulesWithMeta(context)
-                    },
-                    onSetTag = { tagOrNull ->
-                        updateCapsuleTag(cap.audioFile, tagOrNull)
-                        capsules = loadCapsulesWithMeta(context)
-                    },
-                    onDetails = { onOpenDetails(cap.audioFile.name) },
-                    onRetryAi = {
-                        retryCapsuleAi(context, cap.audioFile)
-                        capsules = loadCapsulesWithMeta(context)
-                    }
+    RewindBackground {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .padding(top = 28.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 2.dp)
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.ic_capsule),
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp)
                 )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "Your Capsules",
+                    style = MaterialTheme.typography.headlineSmall
+                )
+            }
+            Text(
+                text = "Tap one to replay the last moments — and archive them when you’re done.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(modifier = Modifier.weight(1f), onClick = { capsules = loadCapsulesWithMeta(context) }) {
+                    Text("Refresh")
+                }
+                OutlinedButton(modifier = Modifier.weight(1f), onClick = onBack) {
+                    Text("Back")
+                }
+            }
+
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                        .requestEmail()
+                        .requestScopes(Scope(DriveScopes.DRIVE_FILE))
+                        .build()
+
+                    val client = GoogleSignIn.getClient(context, gso)
+                    signInLauncher.launch(client.signInIntent)
+                }
+            ) {
+                Text("Archive to Drive + Clear")
+            }
+
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(capsules, key = { it.audioFile.name }) { cap ->
+                    CapsuleCard(
+                        cap = cap,
+                        onPlay = {
+                            player?.stop(); player?.release(); player = null
+                            player = MediaPlayer().apply {
+                                setDataSource(cap.audioFile.absolutePath)
+                                setOnPreparedListener { it.start() }
+                                setOnCompletionListener { mp -> mp.release(); player = null }
+                                prepareAsync()
+                            }
+                        },
+                        onDelete = {
+                            deleteCapsule(cap.audioFile)
+                            capsules = loadCapsulesWithMeta(context)
+                        },
+                        onSetTag = { tagOrNull ->
+                            updateCapsuleTag(cap.audioFile, tagOrNull)
+                            capsules = loadCapsulesWithMeta(context)
+                        },
+                        onDetails = { onOpenDetails(cap.audioFile.name) },
+                        onRetryAi = {
+                            retryCapsuleAi(context, cap.audioFile)
+                            capsules = loadCapsulesWithMeta(context)
+                        }
+                    )
+                }
             }
         }
     }
@@ -465,42 +554,67 @@ private fun CapsuleDetailsScreen(wavName: String, onBack: () -> Unit) {
     val status = obj?.optString("aiStatus", "") ?: ""
     val err = obj?.optString("aiError", "") ?: ""
 
-    Column(
-        Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                title,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            OutlinedButton(onClick = onBack) { Text("Back") }
-        }
+    RewindBackground {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .padding(top = 28.dp, bottom = 16.dp), // <-- pushes down from status bar
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // HEADER IMAGE
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Image(
+                    painter = painterResource(id = imageForTag(obj?.optJSONArray("tags")?.optString(0))),
+                    contentDescription = null,
+                    modifier = Modifier.size(64.dp)
+                )
+            }
 
-        when (status) {
-            "pending" -> Text("Summarizing…", style = MaterialTheme.typography.bodyMedium)
-            "error" -> {
-                Text("AI summary failed.", style = MaterialTheme.typography.bodyMedium)
-                if (err.isNotBlank()) {
-                    Text(err, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(6.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    title,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                OutlinedButton(onClick = onBack) {
+                    Text("Back")
                 }
             }
-        }
 
-        if (summary.isNotBlank()) {
-            Text("Summary", fontWeight = FontWeight.SemiBold)
-            Text(summary)
-        }
+            when (status) {
+                "pending" -> Text("Summarizing…", style = MaterialTheme.typography.bodyMedium)
+                "error" -> {
+                    Text("AI summary failed.", style = MaterialTheme.typography.bodyMedium)
+                    if (err.isNotBlank()) {
+                        Text(err, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
 
-        if (transcript.isNotBlank()) {
-            Text("Transcript", fontWeight = FontWeight.SemiBold)
-            Text(transcript)
-        }
+            if (summary.isNotBlank()) {
+                Text("Summary", fontWeight = FontWeight.SemiBold)
+                Text(summary)
+            }
 
-        Text("Audio file: ${wav.name}", style = MaterialTheme.typography.bodySmall)
+            if (transcript.isNotBlank()) {
+                Text("Transcript", fontWeight = FontWeight.SemiBold)
+                Text(transcript)
+            }
+
+            Text("Audio file: ${wav.name}", style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
@@ -520,89 +634,138 @@ private fun CapsuleCard(
     val options = listOf("Idea", "Instruction", "Moment")
     val selectedTag: String? = cap.tags.firstOrNull()
 
+    val tag = selectedTag
+    val accent = accentFor(tag)
+    val tagText = tag ?: "Unlabeled"
+
+    val preview = cap.summary
+        ?.lineSequence()
+        ?.firstOrNull { it.isNotBlank() }
+        ?.take(90)
+        .orEmpty()
+
+    val shape = RoundedCornerShape(18.dp)
+
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.9f),
+                shape = shape
+            ),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+        shape = shape
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Header (full-width, no buttons here so it won't get squished)
-            Text(
-                text = cap.title?.takeIf { it.isNotBlank() } ?: "Rewind Capsule",
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            // Top row: accent bar + title + optional image
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(6.dp)
+                        .height(44.dp)
+                        .clip(RoundedCornerShape(999.dp))
+                        .background(accent)
+                )
 
-            val preview = cap.summary
-                ?.lineSequence()
-                ?.firstOrNull { it.isNotBlank() }
-                ?.take(90)
-                .orEmpty()
+                Spacer(Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Image(
+                            painter = painterResource(R.drawable.ic_capsule),
+                            contentDescription = null,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = cap.title?.takeIf { it.isNotBlank() } ?: "Rewind Capsule",
+                            color = MaterialTheme.colorScheme.onSurface,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+
+                    Text(
+                        text = "$whenText • $lenText • $tagText",
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.78f),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                // Right-side tag image (optional)
+                Image(
+                    painter = painterResource(id = imageForTag(tag)),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .graphicsLayer(alpha = 0.92f)
+                )
+            }
 
             if (preview.isNotBlank()) {
                 Text(
                     text = preview,
                     style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
             }
 
-            val tagText = selectedTag ?: "Unlabeled"
-
-            val badge = when (cap.aiStatus) {
-                "pending" -> "Summarizing…"
-                "error" -> "AI Failed"
-                "done" -> "Ready"
-                else -> null
-            }
-
-            val metaLine = buildString {
-                append("$whenText • $lenText • $tagText")
-                if (badge != null) append(" • $badge")
-            }
-
-            Text(
-                text = metaLine,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            // Actions row
+            // Action buttons
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Button(
                     modifier = Modifier.weight(1f),
-                    onClick = onPlay
+                    onClick = onPlay,
+                    colors = ButtonDefaults.buttonColors(containerColor = accent)
                 ) { Text("Play") }
 
                 OutlinedButton(
                     modifier = Modifier.weight(1f),
+                    onClick = onDetails
+                ) { Text("Details") }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
                     onClick = onDelete
                 ) { Text("Delete") }
+
+                if (cap.aiStatus == "error") {
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        onClick = onRetryAi
+                    ) { Text("Retry") }
+                }
             }
 
-            OutlinedButton(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onDetails
-            ) { Text("View Details") }
-
-            if (cap.aiStatus == "error") {
-                OutlinedButton(
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = onRetryAi
-                ) { Text("Retry Summary") }
-            }
-
-            // Label chips (scroll instead of wrapping into ugly vertical stack)
+            // Chips
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -610,13 +773,26 @@ private fun CapsuleCard(
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 options.forEach { t ->
+                    val chipAccent = accentFor(t)
                     FilterChip(
                         selected = (t == selectedTag),
                         onClick = {
                             val next = if (t == selectedTag) null else t
                             onSetTag(next)
                         },
-                        label = { Text(t) }
+                        label = { Text(t) },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                            selectedLabelColor = MaterialTheme.colorScheme.onSurface,
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.55f),
+                            labelColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f)
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = (t == selectedTag),
+                            borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                            selectedBorderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f)
+                        )
                     )
                 }
             }
@@ -848,10 +1024,12 @@ private fun uploadAllCapsulesToDrive(
         val baseName = safeDriveName(finalTitle)
         val parent = folderIdFor(tag)
 
+        val driveWavName = "$baseName.wav"
+
         // Upload WAV
         runCatching {
             val wavMeta = com.google.api.services.drive.model.File().apply {
-                name = "$baseName.wav"
+                name = driveWavName
                 parents = listOf(parent)
             }
             val wavMedia = com.google.api.client.http.FileContent("audio/wav", wav)
@@ -864,7 +1042,7 @@ private fun uploadAllCapsulesToDrive(
                 runCatching { org.json.JSONObject(json.readText()) }.getOrNull() ?: org.json.JSONObject()
             else org.json.JSONObject()
 
-            val html = buildCapsuleHtml(obj, wav.name, wav.lastModified())
+            val html = buildCapsuleHtml(context, obj, driveWavName, wav.lastModified())
 
             // write a temp html file (so Drive SDK can upload it)
             val tmp = File(context.cacheDir, "$baseName.html")
@@ -892,58 +1070,77 @@ private fun uploadAllCapsulesToDrive(
     }
 }
 
-private fun buildCapsuleHtml(meta: org.json.JSONObject, wavName: String, createdAtMs: Long): String {
+private fun buildCapsuleHtml(
+    context: android.content.Context,
+    meta: org.json.JSONObject,
+    driveWavName: String,
+    createdAtMs: Long
+): String {
     fun esc(s: String) = s
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
 
-    val title = meta.optString("title", "").takeIf { it.isNotBlank() } ?: "Rewind Capsule"
-    val summary = meta.optString("summary", "")
-    val transcript = meta.optString("transcript", "")
     val tag = meta.optJSONArray("tags")?.optString(0, null) ?: "Unlabeled"
-    val whenText = SimpleDateFormat("EEE, MMM d • h:mm a", Locale.getDefault()).format(Date(createdAtMs))
+    val whenText = SimpleDateFormat("EEE, MMM d • h:mm a", Locale.getDefault())
+        .format(Date(createdAtMs))
 
-    val summaryLines = summary.lines().filter { it.isNotBlank() }
-    val transcriptLines = transcript.lines().filter { it.isNotBlank() }
+    // Title should be the nice human title (NOT the raw rewind_*.wav)
+    // If your JSON title is empty, fall back to "Capsule • 12:43 a.m."
+    val jsonTitle = meta.optString("title", "").trim()
+    val title = if (jsonTitle.isNotBlank()) jsonTitle else "Capsule • ${prettyTime(createdAtMs)}"
+
+    val summary = meta.optString("summary", "").trim()
+    val transcript = meta.optString("transcript", "").trim()
+
+    // Emojis + super simple structure (Docs keeps this best)
+    fun summaryBlock(): String {
+        if (summary.isBlank()) return "<p><i>(No summary yet)</i></p>"
+        val lines = summary.lines().map { it.trim() }.filter { it.isNotBlank() }
+        return "<ul>" + lines.joinToString("") {
+            "<li>${esc(it.trimStart('-', '•', ' '))}</li>"
+        } + "</ul>"
+    }
+
+    fun transcriptBlock(): String {
+        if (transcript.isBlank()) return "<p><i>(No transcript yet)</i></p>"
+        return "<p style='white-space:pre-wrap;'>${esc(transcript)}</p>"
+    }
 
     return """
 <!doctype html>
 <html>
-  <head>
+<head>
   <meta charset="utf-8"/>
-  <meta name="generator" content="REWIND"/>
 </head>
-  <body>
-    <h1>🧠 ${esc(title)}</h1>
+<body>
+  <h1>🌀 ${esc(title)}</h1>
 
-    <table border="0" cellpadding="6" cellspacing="0">
-      <tr>
-        <td><b>🏷️ Label</b></td><td>${esc(tag)}</td>
-      </tr>
-      <tr>
-        <td><b>🕒 Time</b></td><td>${esc(whenText)}</td>
-      </tr>
-      <tr>
-        <td><b>🎧 Audio</b></td><td>${esc(wavName)}</td>
-      </tr>
-    </table>
+<p style="margin:6px 0;">
+  <b>🏷️ Label:</b> ${esc(tag)}
+</p>
 
-    <hr/>
+<p style="margin:6px 0;">
+  <b>🕒 Time:</b> ${esc(whenText)}
+</p>
 
-    <h2>✨ Summary</h2>
-    ${if (summaryLines.isEmpty()) "<p><i>(No summary yet)</i></p>"
-    else "<ul>" + summaryLines.joinToString("") { "<li>${esc(it.trimStart('-', ' ', '\t'))}</li>" } + "</ul>"
-    }
+<p style="margin:6px 0 14px 0;">
+  <b>🎧 Audio:</b> ${esc(driveWavName)}
+</p>
 
-    <h2>📝 Transcript</h2>
-    ${if (transcriptLines.isEmpty()) "<p><i>(No transcript yet)</i></p>"
-    else "<p>" + esc(transcriptLines.joinToString("\n")).replace("\n", "<br/>") + "</p>"
-    }
+  <hr/>
 
-    <hr/>
-    <p><i>Generated by REWIND</i></p>
-  </body>
+  <h2 style="margin-top:18px;">✨ Summary</h2>
+  ${summaryBlock()}
+  
+  <hr style="margin:18px 0;" />
+
+  <h2 style="margin-top:22px;">📝 Transcript</h2>
+  ${transcriptBlock()}
+
+  <hr style="margin:22px 0;" />
+<p style="margin-top:10px;"><i>Generated by REWIND</i></p>
+</body>
 </html>
 """.trimIndent()
 }
@@ -968,4 +1165,95 @@ private fun safeDriveName(raw: String): String {
         .replace(Regex("""\s+"""), " ")
         .trim()
         .take(80)
+}
+
+private fun capsuleIconDataUri(context: android.content.Context): String {
+    val drawable = ContextCompat.getDrawable(context, R.drawable.ic_capsule)
+        ?: return ""
+
+    val bitmap: Bitmap = if (drawable is BitmapDrawable) {
+        drawable.bitmap
+    } else {
+        Bitmap.createBitmap(
+            drawable.intrinsicWidth.coerceAtLeast(1),
+            drawable.intrinsicHeight.coerceAtLeast(1),
+            Bitmap.Config.ARGB_8888
+        ).also { bmp ->
+            val canvas = Canvas(bmp)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+        }
+    }
+
+    val out = ByteArrayOutputStream()
+    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+    val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    return "data:image/png;base64,$b64"
+}
+
+private fun accentFor(tag: String?): androidx.compose.ui.graphics.Color = when (tag) {
+    "Idea" -> AccentIdea
+    "Instruction" -> AccentInstruction
+    "Moment" -> AccentMoment
+    else -> AccentMisc
+}
+
+private fun imageForTag(tag: String?): Int = when (tag) {
+    "Idea" -> R.drawable.img_idea
+    "Instruction" -> R.drawable.img_instruction
+    "Moment" -> R.drawable.img_moment
+    else -> R.drawable.img_misc
+}
+
+@Composable
+private fun RewindBackground(content: @Composable () -> Unit) {
+    val bg = Brush.verticalGradient(
+        listOf(
+            Color(0xFF060612),
+            Color(0xFF0B0B1A),
+            Color(0xFF060612)
+        )
+    )
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(bg)
+    ) {
+        // contrast scrim
+        Box(
+            Modifier
+                .matchParentSize()
+                .background(Color(0x99000000))
+        )
+
+        CompositionLocalProvider(
+            LocalContentColor provides MaterialTheme.colorScheme.onBackground
+        ) {
+            content()
+        }
+    }
+}
+
+private fun drawableDataUri(context: android.content.Context, resId: Int): String {
+    val drawable = ContextCompat.getDrawable(context, resId) ?: return ""
+
+    val bitmap: Bitmap = if (drawable is BitmapDrawable) {
+        drawable.bitmap
+    } else {
+        Bitmap.createBitmap(
+            drawable.intrinsicWidth.coerceAtLeast(1),
+            drawable.intrinsicHeight.coerceAtLeast(1),
+            Bitmap.Config.ARGB_8888
+        ).also { bmp ->
+            val canvas = Canvas(bmp)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+        }
+    }
+
+    val out = ByteArrayOutputStream()
+    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+    val b64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    return "data:image/png;base64,$b64"
 }
