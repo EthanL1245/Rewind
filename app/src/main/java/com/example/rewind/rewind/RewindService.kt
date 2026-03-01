@@ -189,11 +189,13 @@ class RewindService : Service() {
                     }
                 }
             } else {
-                // 👇 DEV MODE (no quota usage)
+                val timeLabel = java.text.SimpleDateFormat("h:mm a", java.util.Locale.getDefault())
+                    .format(java.util.Date(wavFile.lastModified()))
+
                 updateJsonFields(jsonFile) { obj ->
-                    obj.put("title", "Test Clip")
+                    obj.put("title", "Capsule • $timeLabel")
                     obj.put("summary", "• Dev mode\n• Gemini disabled")
-                    obj.put("transcript", "(transcript skipped)")
+                    obj.put("transcript", "")
                     obj.put("aiStatus", "mock")
                 }
             }

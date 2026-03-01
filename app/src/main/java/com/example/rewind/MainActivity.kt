@@ -1,5 +1,7 @@
 package com.example.rewind
 
+import java.io.FileOutputStream
+import com.google.api.client.http.FileContent
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -168,80 +170,88 @@ private fun SetupScreen(
     }
 
     Column(
-        Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("REWIND", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
-        Text("Pick a mode, set rewind length, start a timed session.")
+        Column(
+            Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text("REWIND", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+            Text("Pick a mode, set rewind length, start a timed session.")
 
-        Text("Mode", fontWeight = FontWeight.SemiBold)
+            Text("Mode", fontWeight = FontWeight.SemiBold)
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            presets.take(3).forEach { p -> // Lecture, Meeting, Walk
-                FilterChip(
-                    selected = (p == selectedPreset),
-                    onClick = { selectedPreset = p },
-                    label = { Text(p.name) }
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                presets.take(3).forEach { p -> // Lecture, Meeting, Walk
+                    FilterChip(
+                        selected = (p == selectedPreset),
+                        onClick = { selectedPreset = p },
+                        label = { Text(p.name) }
+                    )
+                }
             }
-        }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            presets.drop(3).forEach { p -> // Brainstorm
-                FilterChip(
-                    selected = (p == selectedPreset),
-                    onClick = { selectedPreset = p },
-                    label = { Text(p.name) }
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                presets.drop(3).forEach { p -> // Brainstorm
+                    FilterChip(
+                        selected = (p == selectedPreset),
+                        onClick = { selectedPreset = p },
+                        label = { Text(p.name) }
+                    )
+                }
             }
-        }
 
-        val minutes = selectedPreset.sessionSeconds / 60
-        Text("Session length: ${minutes} min", fontWeight = FontWeight.SemiBold)
+            val minutes = selectedPreset.sessionSeconds / 60
+            Text("Session length: ${minutes} min", fontWeight = FontWeight.SemiBold)
 
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Rewind length: ${rewindSeconds}s", fontWeight = FontWeight.SemiBold)
-            Slider(
-                value = rewindSeconds.toFloat(),
-                onValueChange = { rewindSeconds = it.toInt() },
-                valueRange = 15f..120f,
-                steps = (120 - 15) / 5 - 1 // snap ~every 5s
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Rewind length: ${rewindSeconds}s", fontWeight = FontWeight.SemiBold)
+                Slider(
+                    value = rewindSeconds.toFloat(),
+                    onValueChange = { rewindSeconds = it.toInt() },
+                    valueRange = 15f..120f,
+                    steps = (120 - 15) / 5 - 1 // snap ~every 5s
+                )
+                Text("15s  •  2m", modifier = Modifier.align(Alignment.End))
+            }
+
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    // notifications permission (Android 13+)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+
+                    val hasMic = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.RECORD_AUDIO
+                    ) == PackageManager.PERMISSION_GRANTED
+
+                    if (hasMic) {
+                        val endAt = System.currentTimeMillis() + selectedPreset.sessionSeconds * 1000L
+                        saveActiveSession(context, endAt, selectedPreset.sessionSeconds, rewindSeconds)
+                        startRewindService(context, selectedPreset.sessionSeconds, rewindSeconds)
+                        onStart(selectedPreset.sessionSeconds, rewindSeconds)
+                    } else {
+                        micLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                    }
+                }
+            ) { Text("Start Session") }
+
+            Text(
+                "This runs a Foreground Service (visible notification) so Android allows ongoing mic buffering.",
+                style = MaterialTheme.typography.bodySmall
             )
-            Text("15s  •  2m", modifier = Modifier.align(Alignment.End))
+
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onViewCapsules
+            ) { Text("View Capsules") }
         }
-
-        Button(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = {
-                // notifications permission (Android 13+)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
-
-                val hasMic = ContextCompat.checkSelfPermission(
-                    context, Manifest.permission.RECORD_AUDIO
-                ) == PackageManager.PERMISSION_GRANTED
-
-                if (hasMic) {
-                    val endAt = System.currentTimeMillis() + selectedPreset.sessionSeconds * 1000L
-                    saveActiveSession(context, endAt, selectedPreset.sessionSeconds, rewindSeconds)
-                    startRewindService(context, selectedPreset.sessionSeconds, rewindSeconds)
-                    onStart(selectedPreset.sessionSeconds, rewindSeconds)
-                } else {
-                    micLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                }
-            }
-        ) { Text("Start Session") }
-
-        Text(
-            "This runs a Foreground Service (visible notification) so Android allows ongoing mic buffering.",
-            style = MaterialTheme.typography.bodySmall
-        )
-
-        OutlinedButton(
-            modifier = Modifier.fillMaxWidth(),
-            onClick = onViewCapsules
-        ) { Text("View Capsules") }
     }
 }
 
@@ -390,7 +400,7 @@ private fun CapsulesScreen(
 
             val client = GoogleSignIn.getClient(context, gso)
             signInLauncher.launch(client.signInIntent)
-        }) { Text("Archive to Drive") }
+        }) { Text("Archive + Clear") }
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(capsules, key = { it.audioFile.name }) { cap ->
@@ -409,8 +419,8 @@ private fun CapsulesScreen(
                         deleteCapsule(cap.audioFile)
                         capsules = loadCapsulesWithMeta(context)
                     },
-                    onSetTag = { newTag ->
-                        updateCapsuleTag(cap.audioFile, newTag)
+                    onSetTag = { tagOrNull ->
+                        updateCapsuleTag(cap.audioFile, tagOrNull)
                         capsules = loadCapsulesWithMeta(context)
                     },
                     onDetails = { onOpenDetails(cap.audioFile.name) },
@@ -499,7 +509,7 @@ private fun CapsuleCard(
     cap: Capsule,
     onPlay: () -> Unit,
     onDelete: () -> Unit,
-    onSetTag: (String) -> Unit,
+    onSetTag: (String?) -> Unit,
     onDetails: () -> Unit,
     onRetryAi: () -> Unit
 ) {
@@ -508,7 +518,7 @@ private fun CapsuleCard(
     val lenText = cap.seconds?.let { "${it}s" } ?: "?"
 
     val options = listOf("Idea", "Instruction", "Moment")
-    val currentTag = cap.tags.firstOrNull()
+    val selectedTag: String? = cap.tags.firstOrNull()
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -528,8 +538,37 @@ private fun CapsuleCard(
                 overflow = TextOverflow.Ellipsis
             )
 
+            val preview = cap.summary
+                ?.lineSequence()
+                ?.firstOrNull { it.isNotBlank() }
+                ?.take(90)
+                .orEmpty()
+
+            if (preview.isNotBlank()) {
+                Text(
+                    text = preview,
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+
+            val tagText = selectedTag ?: "Unlabeled"
+
+            val badge = when (cap.aiStatus) {
+                "pending" -> "Summarizing…"
+                "error" -> "AI Failed"
+                "done" -> "Ready"
+                else -> null
+            }
+
+            val metaLine = buildString {
+                append("$whenText • $lenText • $tagText")
+                if (badge != null) append(" • $badge")
+            }
+
             Text(
-                text = "$whenText • $lenText • $currentTag",
+                text = metaLine,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -572,8 +611,11 @@ private fun CapsuleCard(
             ) {
                 options.forEach { t ->
                     FilterChip(
-                        selected = (t == currentTag),
-                        onClick = { onSetTag(t) },
+                        selected = (t == selectedTag),
+                        onClick = {
+                            val next = if (t == selectedTag) null else t
+                            onSetTag(next)
+                        },
                         label = { Text(t) }
                     )
                 }
@@ -605,28 +647,24 @@ private fun deleteCapsule(wav: File) {
     runCatching { wav.delete() }
 }
 
-private fun updateCapsuleTag(wav: File, newTag: String) {
+private fun updateCapsuleTag(wav: File, newTagOrNull: String?) {
     val meta = capsuleJsonFile(wav)
-    val obj = if (meta.exists())
-        org.json.JSONObject(meta.readText())
-    else
-        org.json.JSONObject()
 
-    val arr = obj.optJSONArray("tags") ?: org.json.JSONArray()
+    val obj = if (meta.exists()) {
+        runCatching { org.json.JSONObject(meta.readText()) }.getOrNull() ?: org.json.JSONObject()
+    } else org.json.JSONObject()
 
-    val tags = mutableSetOf<String>()
-    for (i in 0 until arr.length()) tags.add(arr.getString(i))
+    val arr = org.json.JSONArray()
+    if (newTagOrNull != null) arr.put(newTagOrNull) // else: empty array (none selected)
+    obj.put("tags", arr)
 
-    if (tags.contains(newTag)) {
-        tags.remove(newTag)   // toggle OFF
-    } else {
-        tags.clear()          // single category only
-        tags.add(newTag)      // toggle ON
+    // If we’re in DEV/mock mode, keep the title meaningful even without Gemini:
+    val status = obj.optString("aiStatus", "")
+    if (status == "mock") {
+        val timeLabel = SimpleDateFormat("h:mm a", Locale.getDefault()).format(Date(wav.lastModified()))
+        val prefix = newTagOrNull ?: "Capsule"
+        obj.put("title", "$prefix • $timeLabel")
     }
-
-    val newArr = org.json.JSONArray()
-    tags.forEach { newArr.put(it) }
-    obj.put("tags", newArr)
 
     meta.writeText(obj.toString())
 }
@@ -793,39 +831,141 @@ private fun uploadAllCapsulesToDrive(
     wavs.forEach { wav ->
         val json = File(wav.parentFile, wav.name.removeSuffix(".wav") + ".json")
 
-        val tag = runCatching {
-            if (!json.exists()) null else {
-                val obj = org.json.JSONObject(json.readText())
-                obj.optJSONArray("tags")?.optString(0, null)
-            }
-        }.getOrNull()
+        val obj = if (json.exists())
+            runCatching { org.json.JSONObject(json.readText()) }.getOrNull() ?: org.json.JSONObject()
+        else org.json.JSONObject()
 
+        val tag = obj.optJSONArray("tags")?.optString(0, null)
+
+        val aiTitle = obj.optString("title", "").trim()
+        val label = tag ?: "Capsule"
+
+        val fallback = "$label — ${prettyTime(wav.lastModified())}"
+        val finalTitle =
+            if (aiTitle.isNotBlank()) "$label — $aiTitle"
+            else fallback
+
+        val baseName = safeDriveName(finalTitle)
         val parent = folderIdFor(tag)
 
         // Upload WAV
         runCatching {
-            val meta = com.google.api.services.drive.model.File().apply {
-                name = wav.name
+            val wavMeta = com.google.api.services.drive.model.File().apply {
+                name = "$baseName.wav"
                 parents = listOf(parent)
             }
-            val media = com.google.api.client.http.FileContent("audio/wav", wav)
-            drive.files().create(meta, media).setFields("id").execute()
+            val wavMedia = com.google.api.client.http.FileContent("audio/wav", wav)
+            drive.files().create(wavMeta, wavMedia).setFields("id").execute()
         }.getOrThrow()
 
-        // Upload JSON (metadata)
+        // Upload CAPSULE HTML (meaningful artifact)
         runCatching {
-            if (json.exists()) {
-                val meta = com.google.api.services.drive.model.File().apply {
-                    name = json.name
-                    parents = listOf(parent)
-                }
-                val media = com.google.api.client.http.FileContent("application/json", json)
-                drive.files().create(meta, media).setFields("id").execute()
+            val obj = if (json.exists())
+                runCatching { org.json.JSONObject(json.readText()) }.getOrNull() ?: org.json.JSONObject()
+            else org.json.JSONObject()
+
+            val html = buildCapsuleHtml(obj, wav.name, wav.lastModified())
+
+            // write a temp html file (so Drive SDK can upload it)
+            val tmp = File(context.cacheDir, "$baseName.html")
+            FileOutputStream(tmp).use { it.write(html.toByteArray(Charsets.UTF_8)) }
+
+            val htmlMeta = com.google.api.services.drive.model.File().apply {
+                name = baseName                 // no .html extension
+                parents = listOf(parent)
+                mimeType = "application/vnd.google-apps.document"
             }
+
+            val htmlMedia = FileContent("text/html", tmp)
+
+            drive.files()
+                .create(htmlMeta, htmlMedia)
+                .setFields("id")
+                .execute()
+
+            runCatching { tmp.delete() }
         }.getOrThrow()
 
         // If upload succeeded, delete local
         runCatching { json.delete() }
         runCatching { wav.delete() }
     }
+}
+
+private fun buildCapsuleHtml(meta: org.json.JSONObject, wavName: String, createdAtMs: Long): String {
+    fun esc(s: String) = s
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+
+    val title = meta.optString("title", "").takeIf { it.isNotBlank() } ?: "Rewind Capsule"
+    val summary = meta.optString("summary", "")
+    val transcript = meta.optString("transcript", "")
+    val tag = meta.optJSONArray("tags")?.optString(0, null) ?: "Unlabeled"
+    val whenText = SimpleDateFormat("EEE, MMM d • h:mm a", Locale.getDefault()).format(Date(createdAtMs))
+
+    val summaryLines = summary.lines().filter { it.isNotBlank() }
+    val transcriptLines = transcript.lines().filter { it.isNotBlank() }
+
+    return """
+<!doctype html>
+<html>
+  <head>
+  <meta charset="utf-8"/>
+  <meta name="generator" content="REWIND"/>
+</head>
+  <body>
+    <h1>🧠 ${esc(title)}</h1>
+
+    <table border="0" cellpadding="6" cellspacing="0">
+      <tr>
+        <td><b>🏷️ Label</b></td><td>${esc(tag)}</td>
+      </tr>
+      <tr>
+        <td><b>🕒 Time</b></td><td>${esc(whenText)}</td>
+      </tr>
+      <tr>
+        <td><b>🎧 Audio</b></td><td>${esc(wavName)}</td>
+      </tr>
+    </table>
+
+    <hr/>
+
+    <h2>✨ Summary</h2>
+    ${if (summaryLines.isEmpty()) "<p><i>(No summary yet)</i></p>"
+    else "<ul>" + summaryLines.joinToString("") { "<li>${esc(it.trimStart('-', ' ', '\t'))}</li>" } + "</ul>"
+    }
+
+    <h2>📝 Transcript</h2>
+    ${if (transcriptLines.isEmpty()) "<p><i>(No transcript yet)</i></p>"
+    else "<p>" + esc(transcriptLines.joinToString("\n")).replace("\n", "<br/>") + "</p>"
+    }
+
+    <hr/>
+    <p><i>Generated by REWIND</i></p>
+  </body>
+</html>
+""".trimIndent()
+}
+
+private fun sanitizeForFilename(input: String): String {
+    val cleaned = input
+        .trim()
+        .replace(Regex("\\s+"), " ")
+        .replace(Regex("[^A-Za-z0-9 _-]"), "")   // keep simple chars
+        .take(40)                               // prevent super long filenames
+
+    return if (cleaned.isBlank()) "Capsule" else cleaned
+}
+
+private fun prettyTime(ms: Long): String =
+    SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(ms))
+
+private fun safeDriveName(raw: String): String {
+    // Drive allows lots, but keep it clean + avoid weird characters
+    return raw
+        .replace(Regex("""[\\/:*?"<>|]"""), " ") // Windows-illegal chars
+        .replace(Regex("""\s+"""), " ")
+        .trim()
+        .take(80)
 }
