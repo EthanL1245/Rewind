@@ -18,8 +18,18 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
+import android.util.Base64
+import kotlinx.coroutines.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import com.example.rewind.BuildConfig
 
 class RewindService : Service() {
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
+    private val http = OkHttpClient()
 
     private val sampleRate = 16000
     private val maxSecondsInBuffer = 120   // ring holds up to 2 minutes
@@ -144,10 +154,36 @@ class RewindService : Service() {
         // store capsule metadata
         val obj = org.json.JSONObject()
         obj.put("seconds", secondsUsed)
+
         val arr = org.json.JSONArray()
-        arr.put("Moment") // default tag
+        arr.put("Moment")
         obj.put("tags", arr)
+
+        // AI fields (filled in later)
+        obj.put("title", "Summarizing…")
+        obj.put("summary", "")
+        obj.put("transcript", "")
+        obj.put("aiStatus", "pending")
+
         jsonFile.writeText(obj.toString())
+
+        // Kick off Gemini summarization immediately (best UX)
+        serviceScope.launch {
+            try {
+                val (title, summary, transcript) = geminiGenerateTitleSummaryTranscript(wavFile)
+                updateJsonFields(jsonFile) { obj ->
+                    obj.put("title", title)
+                    obj.put("summary", summary)
+                    obj.put("transcript", transcript)
+                    obj.put("aiStatus", "done")
+                }
+            } catch (e: Exception) {
+                updateJsonFields(jsonFile) { obj ->
+                    obj.put("aiStatus", "error")
+                    obj.put("aiError", e.message ?: "unknown")
+                }
+            }
+        }
     }
 
     private fun wavHeader(pcmDataLen: Int, sampleRate: Int, channels: Int, bitsPerSample: Int): ByteArray {
@@ -241,7 +277,82 @@ class RewindService : Service() {
 
     override fun onDestroy() {
         stopRecordingIfNeeded()
+        serviceJob.cancel()
         super.onDestroy()
+    }
+
+    private fun updateJsonFields(jsonFile: File, updater: (org.json.JSONObject) -> Unit) {
+        val obj = runCatching { org.json.JSONObject(jsonFile.readText()) }.getOrNull() ?: org.json.JSONObject()
+        updater(obj)
+        jsonFile.writeText(obj.toString())
+    }
+
+    private fun geminiGenerateTitleSummaryTranscript(wavFile: File): Triple<String, String, String> {
+        val apiKey = BuildConfig.GEMINI_API_KEY
+        require(apiKey.isNotBlank()) { "Missing GEMINI_API_KEY" }
+
+        // Use a "latest" Flash model for speed (names change; check docs if needed) :contentReference[oaicite:4]{index=4}
+        val model = "gemini-flash-latest"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$apiKey"
+
+        val wavBytes = wavFile.readBytes()
+        val b64 = Base64.encodeToString(wavBytes, Base64.NO_WRAP)
+
+        // Ask Gemini to transcribe + title + summarize and return JSON only.
+        val prompt = """
+Return ONLY valid JSON with keys: title, summary, transcript.
+- title: short (max 8 words), helpful.
+- summary: 2-4 bullet points (use "-" lines) OR 2 short sentences.
+- transcript: the transcription of the audio (plain text).
+""".trimIndent()
+
+        val bodyJson = org.json.JSONObject().apply {
+            put("generationConfig", org.json.JSONObject().apply {
+                put("temperature", 0.2)
+                put("responseMimeType", "application/json")
+            })
+            put("contents", org.json.JSONArray().put(
+                org.json.JSONObject().apply {
+                    put("role", "user")
+                    put("parts", org.json.JSONArray().apply {
+                        put(org.json.JSONObject().apply { put("text", prompt) })
+                        put(org.json.JSONObject().apply {
+                            put("inlineData", org.json.JSONObject().apply {
+                                put("mimeType", "audio/wav")
+                                put("data", b64)
+                            })
+                        })
+                    })
+                }
+            ))
+        }.toString()
+
+        val req = Request.Builder()
+            .url(url)
+            .post(bodyJson.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        http.newCall(req).execute().use { resp ->
+            val text = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw RuntimeException("Gemini error ${resp.code}: $text")
+            }
+
+            // Gemini returns candidates[0].content.parts[0].text (which should be JSON string)
+            val root = org.json.JSONObject(text)
+            val jsonText = root.getJSONArray("candidates")
+                .getJSONObject(0)
+                .getJSONObject("content")
+                .getJSONArray("parts")
+                .getJSONObject(0)
+                .optString("text", "{}")
+
+            val out = org.json.JSONObject(jsonText)
+            val title = out.optString("title", "Untitled")
+            val summary = out.optString("summary", "")
+            val transcript = out.optString("transcript", "")
+            return Triple(title, summary, transcript)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

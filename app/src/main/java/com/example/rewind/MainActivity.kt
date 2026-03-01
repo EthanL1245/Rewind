@@ -33,6 +33,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.text.style.TextOverflow
+import kotlinx.coroutines.isActive
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,6 +49,13 @@ class MainActivity : ComponentActivity() {
                 val nav = rememberNavController()
 
                 NavHost(navController = nav, startDestination = startDest) {
+                    composable(
+                        route = "details/{wavName}",
+                        arguments = listOf(navArgument("wavName") { type = NavType.StringType })
+                    ) { backStack ->
+                        val wavName = backStack.arguments?.getString("wavName") ?: return@composable
+                        CapsuleDetailsScreen(wavName = wavName, onBack = { nav.popBackStack() })
+                    }
                     composable("session_active") {
                         val ctx = androidx.compose.ui.platform.LocalContext.current
                         val a = loadActiveSession(ctx)
@@ -93,7 +101,10 @@ class MainActivity : ComponentActivity() {
                     }
 
                     composable("capsules") {
-                        CapsulesScreen(onBack = { nav.popBackStack() })
+                        CapsulesScreen(
+                            onBack = { nav.popBackStack() },
+                            onOpenDetails = { wavName -> nav.navigate("details/$wavName") }
+                        )
                     }
                 }
             }
@@ -294,18 +305,28 @@ private data class Capsule(
     val audioFile: File,
     val createdAtMs: Long,
     val seconds: Int?,
-    val tags: Set<String>
+    val tags: Set<String>,
+    val title: String?,
+    val summary: String?,
+    val transcript: String?,
+    val aiStatus: String?
 )
 
 @Composable
-private fun CapsulesScreen(onBack: () -> Unit) {
+private fun CapsulesScreen(
+    onBack: () -> Unit,
+    onOpenDetails: (String) -> Unit
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var capsules by remember { mutableStateOf(loadCapsulesWithMeta(context)) }
 
     var player by remember { mutableStateOf<MediaPlayer?>(null) }
     DisposableEffect(Unit) {
-        onDispose { player?.release(); player = null }
+        onDispose {
+            player?.release()
+            player = null
+        }
     }
 
     Column(
@@ -339,10 +360,81 @@ private fun CapsulesScreen(onBack: () -> Unit) {
                     onSetTag = { newTag ->
                         updateCapsuleTag(cap.audioFile, newTag)
                         capsules = loadCapsulesWithMeta(context)
-                    }
+                    },
+                    onDetails = { onOpenDetails(cap.audioFile.name) }
                 )
             }
         }
+    }
+}
+@Composable
+private fun CapsuleDetailsScreen(wavName: String, onBack: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val dir = context.getExternalFilesDir(null) ?: context.filesDir
+    val wav = remember(wavName) { File(dir, wavName) }
+    val json = remember(wavName) { File(dir, wavName.replace(".wav", ".json")) }
+
+    // Hold the latest JSON snapshot in state
+    var obj by remember { mutableStateOf<org.json.JSONObject?>(null) }
+
+    // Auto-refresh loop: read JSON repeatedly until done/error (or screen leaves)
+    LaunchedEffect(wavName) {
+        while (isActive) {
+            val latest = if (json.exists()) {
+                runCatching { org.json.JSONObject(json.readText()) }.getOrNull()
+            } else null
+
+            obj = latest
+
+            val status = latest?.optString("aiStatus", "") ?: ""
+            if (status == "done" || status == "error") break
+
+            kotlinx.coroutines.delay(700) // refresh rate (ms)
+        }
+    }
+
+    val title = obj?.optString("title", "Rewind Capsule") ?: "Rewind Capsule"
+    val summary = obj?.optString("summary", "") ?: ""
+    val transcript = obj?.optString("transcript", "") ?: ""
+    val status = obj?.optString("aiStatus", "") ?: ""
+    val err = obj?.optString("aiError", "") ?: ""
+
+    Column(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                title,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            OutlinedButton(onClick = onBack) { Text("Back") }
+        }
+
+        when (status) {
+            "pending" -> Text("Summarizing…", style = MaterialTheme.typography.bodyMedium)
+            "error" -> {
+                Text("AI summary failed.", style = MaterialTheme.typography.bodyMedium)
+                if (err.isNotBlank()) {
+                    Text(err, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        }
+
+        if (summary.isNotBlank()) {
+            Text("Summary", fontWeight = FontWeight.SemiBold)
+            Text(summary)
+        }
+
+        if (transcript.isNotBlank()) {
+            Text("Transcript", fontWeight = FontWeight.SemiBold)
+            Text(transcript)
+        }
+
+        Text("Audio file: ${wav.name}", style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -351,7 +443,8 @@ private fun CapsuleCard(
     cap: Capsule,
     onPlay: () -> Unit,
     onDelete: () -> Unit,
-    onSetTag: (String) -> Unit
+    onSetTag: (String) -> Unit,
+    onDetails: () -> Unit
 ) {
     val fmt = remember { SimpleDateFormat("MMM d, h:mm:ss a", Locale.getDefault()) }
     val whenText = fmt.format(Date(cap.createdAtMs))
@@ -372,7 +465,7 @@ private fun CapsuleCard(
         ) {
             // Header (full-width, no buttons here so it won't get squished)
             Text(
-                text = "Rewind Capsule",
+                text = cap.title?.takeIf { it.isNotBlank() } ?: "Rewind Capsule",
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -400,6 +493,11 @@ private fun CapsuleCard(
                     onClick = onDelete
                 ) { Text("Delete") }
             }
+
+            OutlinedButton(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onDetails
+            ) { Text("View Details") }
 
             // Label chips (scroll instead of wrapping into ugly vertical stack)
             Row(
@@ -471,12 +569,20 @@ private fun loadCapsulesWithMeta(context: android.content.Context): List<Capsule
         val meta = capsuleJsonFile(wav)
         var seconds: Int? = null
         var tags: Set<String> = emptySet()
+        var title: String? = null
+        var summary: String? = null
+        var transcript: String? = null
+        var aiStatus: String? = null
 
         if (meta.exists()) {
             runCatching {
                 val obj = org.json.JSONObject(meta.readText())
                 seconds = if (obj.has("seconds")) obj.optInt("seconds") else null
                 val arr = obj.optJSONArray("tags")
+                title = obj.optString("title", null)
+                summary = obj.optString("summary", null)
+                transcript = obj.optString("transcript", null)
+                aiStatus = obj.optString("aiStatus", null)
                 tags = buildSet {
                     if (arr != null) for (i in 0 until arr.length()) add(arr.getString(i))
                 }
@@ -487,7 +593,11 @@ private fun loadCapsulesWithMeta(context: android.content.Context): List<Capsule
             audioFile = wav,
             createdAtMs = wav.lastModified(),
             seconds = seconds,
-            tags = tags
+            tags = tags,
+            title = title,
+            summary = summary,
+            transcript = transcript,
+            aiStatus = aiStatus
         )
     }
 }
