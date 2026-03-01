@@ -264,38 +264,46 @@ private fun SessionScreen(
     val secs = (remainingMs / 1000) % 60
 
     Column(
-        Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("Session Running", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
-        Text("Rewind length: ${rewindSeconds}s")
+        Column(
+            Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Text("Session Running", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall)
+            Text("Rewind length: ${rewindSeconds}s")
 
-        Text(
-            text = String.format("Time left: %02d:%02d", mins, secs),
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.SemiBold
-        )
+            Text(
+                text = String.format("Time left: %02d:%02d", mins, secs),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.SemiBold
+            )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(
-                modifier = Modifier.weight(1f),
-                onClick = {
-                    stopRewindService(context)
-                    clearActiveSession(context)
-                    onBackToSetup()
-                }
-            ) { Text("End Session") }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Button(
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        stopRewindService(context)
+                        clearActiveSession(context)
+                        onBackToSetup()
+                    }
+                ) { Text("End Session") }
 
-            OutlinedButton(
-                modifier = Modifier.weight(1f),
-                onClick = onViewCapsules
-            ) { Text("View Capsules") }
+                OutlinedButton(
+                    modifier = Modifier.weight(1f),
+                    onClick = onViewCapsules
+                ) { Text("View Capsules") }
+            }
+
+            Text(
+                "Use the notification action “REWIND” anytime to save the last ${rewindSeconds}s into a capsule.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
-
-        Text(
-            "Use the notification action “REWIND” anytime to save the last ${rewindSeconds}s into a capsule.",
-            style = MaterialTheme.typography.bodySmall
-        )
     }
 }
 
@@ -451,7 +459,7 @@ private fun CapsuleCard(
     val lenText = cap.seconds?.let { "${it}s" } ?: "?"
 
     val options = listOf("Idea", "Instruction", "Moment")
-    val currentTag = cap.tags.firstOrNull() ?: "Moment"
+    val currentTag = cap.tags.firstOrNull()
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -543,16 +551,26 @@ private fun deleteCapsule(wav: File) {
 
 private fun updateCapsuleTag(wav: File, newTag: String) {
     val meta = capsuleJsonFile(wav)
-
-    val obj = if (meta.exists()) {
-        runCatching { org.json.JSONObject(meta.readText()) }.getOrNull() ?: org.json.JSONObject()
-    } else {
+    val obj = if (meta.exists())
+        org.json.JSONObject(meta.readText())
+    else
         org.json.JSONObject()
+
+    val arr = obj.optJSONArray("tags") ?: org.json.JSONArray()
+
+    val tags = mutableSetOf<String>()
+    for (i in 0 until arr.length()) tags.add(arr.getString(i))
+
+    if (tags.contains(newTag)) {
+        tags.remove(newTag)   // toggle OFF
+    } else {
+        tags.clear()          // single category only
+        tags.add(newTag)      // toggle ON
     }
 
-    val arr = org.json.JSONArray()
-    arr.put(newTag)          // single category tag
-    obj.put("tags", arr)
+    val newArr = org.json.JSONArray()
+    tags.forEach { newArr.put(it) }
+    obj.put("tags", newArr)
 
     meta.writeText(obj.toString())
 }

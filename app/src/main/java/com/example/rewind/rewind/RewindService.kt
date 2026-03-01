@@ -155,9 +155,7 @@ class RewindService : Service() {
         val obj = org.json.JSONObject()
         obj.put("seconds", secondsUsed)
 
-        val arr = org.json.JSONArray()
-        arr.put("Moment")
-        obj.put("tags", arr)
+        obj.put("tags", org.json.JSONArray()) // start empty
 
         // AI fields (filled in later)
         obj.put("title", "Summarizing…")
@@ -301,9 +299,9 @@ class RewindService : Service() {
         // Ask Gemini to transcribe + title + summarize and return JSON only.
         val prompt = """
 Return ONLY valid JSON with keys: title, summary, transcript.
-- title: short (max 8 words), helpful.
-- summary: 2-4 bullet points (use "-" lines) OR 2 short sentences.
-- transcript: the transcription of the audio (plain text).
+- title: MAX 3 words. No filler. No punctuation.
+- summary: 2–4 bullet points OR 2 short sentences.
+- transcript: full transcription of the audio.
 """.trimIndent()
 
         val bodyJson = org.json.JSONObject().apply {
