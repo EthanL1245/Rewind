@@ -26,14 +26,28 @@ import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import com.example.rewind.rewind.RewindService
 import com.example.rewind.ui.theme.RewindTheme
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.io.File
 import java.text.SimpleDateFormat
+import androidx.compose.runtime.rememberCoroutineScope
 import java.util.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.isActive
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInAccount
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.Scope
+import com.google.api.client.googleapis.extensions.android.gms.auth.GoogleAccountCredential
+import com.google.api.client.http.javanet.NetHttpTransport
+import com.google.api.client.json.gson.GsonFactory
+import com.google.api.services.drive.Drive
+import com.google.api.services.drive.DriveScopes
+import com.google.api.services.drive.model.FileList
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -325,6 +339,7 @@ private fun CapsulesScreen(
     onBack: () -> Unit,
     onOpenDetails: (String) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
 
     var capsules by remember { mutableStateOf(loadCapsulesWithMeta(context)) }
@@ -334,6 +349,25 @@ private fun CapsulesScreen(
         onDispose {
             player?.release()
             player = null
+        }
+    }
+
+    val activity = (context as? android.app.Activity)
+
+    val signInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val task = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+        val account = runCatching { task.result }.getOrNull()
+        if (account != null) {
+            scope.launch(Dispatchers.IO) {
+                val drive = buildDriveService(context, account)
+                uploadAllCapsulesToDrive(context, drive)
+
+                withContext(Dispatchers.Main) {
+                    capsules = loadCapsulesWithMeta(context)
+                }
+            }
         }
     }
 
@@ -347,6 +381,16 @@ private fun CapsulesScreen(
             Spacer(Modifier.width(8.dp))
             OutlinedButton(onClick = onBack) { Text("Back") }
         }
+
+        OutlinedButton(onClick = {
+            val gso = GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestEmail()
+                .requestScopes(Scope(DriveScopes.DRIVE_FILE))
+                .build()
+
+            val client = GoogleSignIn.getClient(context, gso)
+            signInLauncher.launch(client.signInIntent)
+        }) { Text("Archive to Drive") }
 
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(capsules, key = { it.audioFile.name }) { cap ->
@@ -675,4 +719,113 @@ private fun retryCapsuleAi(context: android.content.Context, wav: File) {
         putExtra(RewindService.EXTRA_BASE_NAME, baseName)
     }
     context.startService(i) // service already foreground-running or will start as needed
+}
+
+private fun buildDriveService(context: android.content.Context, account: GoogleSignInAccount): Drive {
+    val credential = GoogleAccountCredential.usingOAuth2(
+        context,
+        listOf(DriveScopes.DRIVE_FILE)
+    )
+    credential.selectedAccount = account.account
+
+    return Drive.Builder(
+        NetHttpTransport(),
+        GsonFactory.getDefaultInstance(),
+        credential
+    ).setApplicationName("REWIND").build()
+}
+private fun findOrCreateFolder(drive: Drive, name: String, parentId: String? = null): String {
+    val q = buildString {
+        append("mimeType='application/vnd.google-apps.folder' and name='$name' and trashed=false")
+        if (parentId != null) append(" and '$parentId' in parents")
+    }
+
+    val results: FileList = drive.files().list()
+        .setQ(q)
+        .setSpaces("drive")
+        .setFields("files(id,name)")
+        .execute()
+
+    val existing = results.files?.firstOrNull()
+    if (existing != null) return existing.id
+
+    val folderMeta = com.google.api.services.drive.model.File().apply {
+        this.name = name
+        this.mimeType = "application/vnd.google-apps.folder"
+        if (parentId != null) this.parents = listOf(parentId)
+    }
+
+    val created = drive.files().create(folderMeta)
+        .setFields("id")
+        .execute()
+
+    return created.id
+}
+
+private fun categoryFolderName(tag: String?): String = when (tag) {
+    "Idea" -> "Idea"
+    "Instruction" -> "Instruction"
+    "Moment" -> "Moment"
+    else -> "Misc"
+}
+private fun uploadAllCapsulesToDrive(
+    context: android.content.Context,
+    drive: Drive
+) {
+    val dir = context.getExternalFilesDir(null) ?: context.filesDir
+    val wavs = dir.listFiles()?.filter { it.name.startsWith("rewind_") && it.name.endsWith(".wav") } ?: emptyList()
+    if (wavs.isEmpty()) return
+
+    // Ensure folder tree exists
+    val rootId = findOrCreateFolder(drive, "REWIND")
+    val ideaId = findOrCreateFolder(drive, "Idea", rootId)
+    val instrId = findOrCreateFolder(drive, "Instruction", rootId)
+    val momentId = findOrCreateFolder(drive, "Moment", rootId)
+    val miscId = findOrCreateFolder(drive, "Misc", rootId)
+
+    fun folderIdFor(tag: String?): String = when (tag) {
+        "Idea" -> ideaId
+        "Instruction" -> instrId
+        "Moment" -> momentId
+        else -> miscId
+    }
+
+    wavs.forEach { wav ->
+        val json = File(wav.parentFile, wav.name.removeSuffix(".wav") + ".json")
+
+        val tag = runCatching {
+            if (!json.exists()) null else {
+                val obj = org.json.JSONObject(json.readText())
+                obj.optJSONArray("tags")?.optString(0, null)
+            }
+        }.getOrNull()
+
+        val parent = folderIdFor(tag)
+
+        // Upload WAV
+        runCatching {
+            val meta = com.google.api.services.drive.model.File().apply {
+                name = wav.name
+                parents = listOf(parent)
+            }
+            val media = com.google.api.client.http.FileContent("audio/wav", wav)
+            drive.files().create(meta, media).setFields("id").execute()
+        }.getOrThrow()
+
+        // Upload JSON (metadata)
+        runCatching {
+            if (json.exists()) {
+                val meta = com.google.api.services.drive.model.File().apply {
+                    name = json.name
+                    parents = listOf(parent)
+                }
+                val media = com.google.api.client.http.FileContent("application/json", json)
+                drive.files().create(meta, media).setFields("id").execute()
+            }
+        }.getOrThrow()
+
+        // If upload succeeded, delete local
+        runCatching { json.delete() }
+        runCatching { wav.delete() }
+    }
 }

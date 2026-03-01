@@ -26,6 +26,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import com.example.rewind.BuildConfig
 
+private const val USE_GEMINI = false  // ← DEV MODE toggle
+
 class RewindService : Service() {
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
@@ -169,18 +171,30 @@ class RewindService : Service() {
 
         // Kick off Gemini summarization immediately (best UX)
         serviceScope.launch {
-            try {
-                val (title, summary, transcript) = geminiGenerateTitleSummaryTranscript(wavFile)
-                updateJsonFields(jsonFile) { obj ->
-                    obj.put("title", title)
-                    obj.put("summary", summary)
-                    obj.put("transcript", transcript)
-                    obj.put("aiStatus", "done")
+            if (USE_GEMINI) {
+                try {
+                    val (title, summary, transcript) =
+                        geminiGenerateTitleSummaryTranscript(wavFile)
+
+                    updateJsonFields(jsonFile) { obj ->
+                        obj.put("title", title)
+                        obj.put("summary", summary)
+                        obj.put("transcript", transcript)
+                        obj.put("aiStatus", "done")
+                    }
+                } catch (e: Exception) {
+                    updateJsonFields(jsonFile) { obj ->
+                        obj.put("aiStatus", "error")
+                        obj.put("aiError", e.message ?: "unknown")
+                    }
                 }
-            } catch (e: Exception) {
+            } else {
+                // 👇 DEV MODE (no quota usage)
                 updateJsonFields(jsonFile) { obj ->
-                    obj.put("aiStatus", "error")
-                    obj.put("aiError", e.message ?: "unknown")
+                    obj.put("title", "Test Clip")
+                    obj.put("summary", "• Dev mode\n• Gemini disabled")
+                    obj.put("transcript", "(transcript skipped)")
+                    obj.put("aiStatus", "mock")
                 }
             }
         }
