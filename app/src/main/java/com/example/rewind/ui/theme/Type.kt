@@ -18,6 +18,13 @@ private val SansBody = FontFamily(
 )
 
 val AppTypography = Typography(
+    headlineSmall = TextStyle(
+        fontFamily = SerifHead,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 22.sp,
+        lineHeight = 28.sp,
+        letterSpacing = (-0.1).sp
+    ),
     headlineMedium = TextStyle(
         fontFamily = SerifHead,
         fontWeight = FontWeight.SemiBold,

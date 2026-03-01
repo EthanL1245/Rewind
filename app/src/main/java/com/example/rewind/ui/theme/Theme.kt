@@ -4,21 +4,22 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 
-// Theme.kt
 private val DarkColors = darkColorScheme(
-    background = androidx.compose.ui.graphics.Color(0xFF070812),
-    surface = androidx.compose.ui.graphics.Color(0xFF0E1020),
+    background = BgTop,
+    surface = SurfaceCard,            // <- cards feel richer than plain bg
+    surfaceVariant = SurfaceCard2,     // <- for chips / containers if needed
 
-    onBackground = androidx.compose.ui.graphics.Color(0xFFF2F3FF),
-    onSurface = androidx.compose.ui.graphics.Color(0xFFF2F3FF),
+    onBackground = TextStrong,
+    onSurface = TextStrong,
+    onSurfaceVariant = TextMuted,
 
-    primary = androidx.compose.ui.graphics.Color(0xFF8B5CF6),
-    onPrimary = androidx.compose.ui.graphics.Color(0xFF0B0B10),
+    primary = AccentIdea,             // <- keep purple as primary
+    onPrimary = Ink,
 
-    secondary = androidx.compose.ui.graphics.Color(0xFF22D3EE),
-    onSecondary = androidx.compose.ui.graphics.Color(0xFF061015),
+    secondary = AccentInstruction,
+    onSecondary = Ink,
 
-    outline = androidx.compose.ui.graphics.Color(0xFF2A2D48)
+    outline = BorderSoft
 )
 
 @Composable

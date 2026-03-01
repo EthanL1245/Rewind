@@ -65,6 +65,9 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import java.io.ByteArrayOutputStream
+import com.example.rewind.ui.components.RewindPrimaryButton
+import com.example.rewind.ui.components.RewindGhostButton
+import com.example.rewind.ui.components.RewindChip
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -196,7 +199,7 @@ private fun SetupScreen(
                 Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(start = 18.dp, end = 12.dp, top = 10.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // HEADER (logo-centered, tighter)
@@ -221,24 +224,27 @@ private fun SetupScreen(
                 )
 
                 Spacer(Modifier.height(5.dp))
-                Text("Mode", fontWeight = FontWeight.SemiBold)
+                Text("Mode", fontWeight = FontWeight.SemiBold, color = TextStrong)
+                Text("Pick a mode...", color = TextMuted)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    presets.take(3).forEach { p -> // Lecture, Meeting, Walk
-                        FilterChip(
+                    presets.take(3).forEach { p ->
+                        RewindChip(
+                            text = p.name,
                             selected = (p == selectedPreset),
-                            onClick = { selectedPreset = p },
-                            label = { Text(p.name) }
+                            accent = AccentIdea,
+                            onClick = { selectedPreset = p }
                         )
                     }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    presets.drop(3).forEach { p -> // Brainstorm
-                        FilterChip(
+                    presets.drop(3).forEach { p ->
+                        RewindChip(
+                            text = p.name,
                             selected = (p == selectedPreset),
-                            onClick = { selectedPreset = p },
-                            label = { Text(p.name) }
+                            accent = AccentIdea,
+                            onClick = { selectedPreset = p }
                         )
                     }
                 }
@@ -257,10 +263,12 @@ private fun SetupScreen(
                     Text("15s  •  2m", modifier = Modifier.align(Alignment.End))
                 }
 
-                Button(
+                RewindPrimaryButton(
+                    text = "Start Session",
+                    accent = AccentIdea,
                     modifier = Modifier.fillMaxWidth(),
                     onClick = {
-                        // notifications permission (Android 13+)
+                        // keep your existing onClick code exactly the same
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
@@ -270,35 +278,26 @@ private fun SetupScreen(
                         ) == PackageManager.PERMISSION_GRANTED
 
                         if (hasMic) {
-                            val endAt =
-                                System.currentTimeMillis() + selectedPreset.sessionSeconds * 1000L
-                            saveActiveSession(
-                                context,
-                                endAt,
-                                selectedPreset.sessionSeconds,
-                                rewindSeconds
-                            )
-                            startRewindService(
-                                context,
-                                selectedPreset.sessionSeconds,
-                                rewindSeconds
-                            )
+                            val endAt = System.currentTimeMillis() + selectedPreset.sessionSeconds * 1000L
+                            saveActiveSession(context, endAt, selectedPreset.sessionSeconds, rewindSeconds)
+                            startRewindService(context, selectedPreset.sessionSeconds, rewindSeconds)
                             onStart(selectedPreset.sessionSeconds, rewindSeconds)
                         } else {
                             micLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
                     }
-                ) { Text("Start Session") }
+                )
 
                 Text(
                     "This runs a Foreground Service (visible notification) so Android allows ongoing mic buffering.",
                     style = MaterialTheme.typography.bodySmall
                 )
 
-                OutlinedButton(
+                RewindGhostButton(
+                    text = "View Capsules",
                     modifier = Modifier.fillMaxWidth(),
                     onClick = onViewCapsules
-                ) { Text("View Capsules") }
+                )
             }
         }
     }
@@ -338,46 +337,86 @@ private fun SessionScreen(
 
     RewindBackground {
         Column(
-            Modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp)
+                .padding(top = 28.dp, bottom = 16.dp),
+            verticalArrangement = Arrangement.Top,
+            horizontalAlignment = Alignment.Start
+        ) {
             Column(
-                Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text(
-                    "Session Running",
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.headlineSmall
-                )
-                Text("Rewind length: ${rewindSeconds}s")
-
-                Text(
-                    text = String.format("Time left: %02d:%02d", mins, secs),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.SemiBold
+                    "Session",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = TextMuted
                 )
 
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            stopRewindService(context)
-                            clearActiveSession(context)
-                            onBackToSetup()
+                // “Card” container (manual, not default card)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(22.dp))
+                        .border(0.5.dp, Hairline, RoundedCornerShape(22.dp))
+                        .background(SurfaceCard)
+                        .padding(18.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            text = "Rewind ready",
+                            style = MaterialTheme.typography.titleLarge,
+                            color = TextStrong
+                        )
+
+                        Text(
+                            text = "Rewind length: ${rewindSeconds}s",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = TextMuted
+                        )
+
+                        Text(
+                            text = String.format("%02d:%02d", mins, secs),
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextStrong
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        // Buttons (custom components)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            RewindPrimaryButton(
+                                text = "End Session",
+                                accent = AccentMoment,
+                                modifier = Modifier.weight(1f),
+                                onClick = {
+                                    stopRewindService(context)
+                                    clearActiveSession(context)
+                                    onBackToSetup()
+                                }
+                            )
+
+                            RewindGhostButton(
+                                text = "Capsules",
+                                modifier = Modifier.weight(1f),
+                                onClick = onViewCapsules
+                            )
                         }
-                    ) { Text("End Session") }
-
-                    OutlinedButton(
-                        modifier = Modifier.weight(1f),
-                        onClick = onViewCapsules
-                    ) { Text("View Capsules") }
+                    }
                 }
 
                 Text(
-                    "Use the notification action “REWIND” anytime to save the last ${rewindSeconds}s into a capsule.",
-                    style = MaterialTheme.typography.bodySmall
+                    "Tip: Use the notification action “REWIND” anytime to save the last ${rewindSeconds}s into a capsule.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextFaint,
+                    modifier = Modifier.padding(horizontal = 4.dp)
                 )
             }
         }
@@ -396,6 +435,37 @@ private data class Capsule(
     val transcript: String?,
     val aiStatus: String?
 )
+
+@Composable
+private fun CapsulesTopBar(
+    count: Int,
+    onRefresh: () -> Unit,
+    onBack: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Capsules",
+                style = MaterialTheme.typography.headlineSmall,
+                color = TextStrong
+            )
+            Text(
+                text = "$count saved",
+                style = MaterialTheme.typography.bodySmall,
+                color = TextMuted
+            )
+        }
+
+        RewindGhostButton(text = "Refresh", onClick = onRefresh)
+        Spacer(Modifier.width(10.dp))
+        RewindGhostButton(text = "Back", onClick = onBack)
+    }
+}
 
 @Composable
 private fun CapsulesScreen(
@@ -651,8 +721,8 @@ private fun CapsuleCard(
             .fillMaxWidth()
             .clip(shape)
             .border(
-                width = 1.dp,
-                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.9f),
+                width = 0.5.dp,
+                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f),
                 shape = shape
             ),
         colors = CardDefaults.cardColors(
@@ -1224,7 +1294,7 @@ private fun RewindBackground(content: @Composable () -> Unit) {
         Box(
             Modifier
                 .matchParentSize()
-                .background(Color(0x99000000))
+                .background(Color(0x33000000))
         )
 
         CompositionLocalProvider(
