@@ -369,7 +369,11 @@ private fun CapsulesScreen(
                         updateCapsuleTag(cap.audioFile, newTag)
                         capsules = loadCapsulesWithMeta(context)
                     },
-                    onDetails = { onOpenDetails(cap.audioFile.name) }
+                    onDetails = { onOpenDetails(cap.audioFile.name) },
+                    onRetryAi = {
+                        retryCapsuleAi(context, cap.audioFile)
+                        capsules = loadCapsulesWithMeta(context)
+                    }
                 )
             }
         }
@@ -452,7 +456,8 @@ private fun CapsuleCard(
     onPlay: () -> Unit,
     onDelete: () -> Unit,
     onSetTag: (String) -> Unit,
-    onDetails: () -> Unit
+    onDetails: () -> Unit,
+    onRetryAi: () -> Unit
 ) {
     val fmt = remember { SimpleDateFormat("MMM d, h:mm:ss a", Locale.getDefault()) }
     val whenText = fmt.format(Date(cap.createdAtMs))
@@ -506,6 +511,13 @@ private fun CapsuleCard(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onDetails
             ) { Text("View Details") }
+
+            if (cap.aiStatus == "error") {
+                OutlinedButton(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onRetryAi
+                ) { Text("Retry Summary") }
+            }
 
             // Label chips (scroll instead of wrapping into ugly vertical stack)
             Row(
@@ -654,4 +666,13 @@ private fun loadActiveSession(context: android.content.Context): ActiveSession? 
         sessionSeconds = prefs.getInt(KEY_SESSION, 0),
         rewindSeconds = prefs.getInt(KEY_REWIND, 30)
     )
+}
+
+private fun retryCapsuleAi(context: android.content.Context, wav: File) {
+    val baseName = wav.name.removeSuffix(".wav")
+    val i = Intent(context, RewindService::class.java).apply {
+        action = RewindService.ACTION_RETRY_AI
+        putExtra(RewindService.EXTRA_BASE_NAME, baseName)
+    }
+    context.startService(i) // service already foreground-running or will start as needed
 }

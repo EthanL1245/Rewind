@@ -51,6 +51,8 @@ class RewindService : Service() {
         const val EXTRA_REWIND_SECONDS = "extra_rewind_seconds"
         const val EXTRA_SESSION_SECONDS = "extra_session_seconds"
         const val ACTION_STOP = "com.example.rewind.ACTION_STOP"
+        const val ACTION_RETRY_AI = "com.example.rewind.ACTION_RETRY_AI"
+        const val EXTRA_BASE_NAME = "extra_base_name" // e.g. "rewind_1700000000000"
     }
 
     private fun startRecordingIfNeeded() {
@@ -227,6 +229,12 @@ class RewindService : Service() {
             return START_NOT_STICKY
         }
 
+        if (intent?.action == ACTION_RETRY_AI) {
+            val base = intent.getStringExtra(EXTRA_BASE_NAME) ?: return START_NOT_STICKY
+            runGeminiForExistingCapsule(base)
+            return START_STICKY
+        }
+
         startRecordingIfNeeded()
 
         val rewindSeconds = intent?.getIntExtra(EXTRA_REWIND_SECONDS, 30) ?: 30
@@ -350,6 +358,40 @@ Return ONLY valid JSON with keys: title, summary, transcript.
             val summary = out.optString("summary", "")
             val transcript = out.optString("transcript", "")
             return Triple(title, summary, transcript)
+        }
+    }
+
+    private fun runGeminiForExistingCapsule(baseName: String) {
+        val dir = getExternalFilesDir(null) ?: filesDir
+        val wavFile = File(dir, "$baseName.wav")
+        val jsonFile = File(dir, "$baseName.json")
+
+        if (!wavFile.exists() || !jsonFile.exists()) return
+
+        // mark pending again
+        updateJsonFields(jsonFile) { obj ->
+            obj.put("aiStatus", "pending")
+            obj.put("aiError", "")
+            obj.put("title", "Summarizing…")
+            obj.put("summary", "")
+            obj.put("transcript", "")
+        }
+
+        serviceScope.launch {
+            try {
+                val (title, summary, transcript) = geminiGenerateTitleSummaryTranscript(wavFile)
+                updateJsonFields(jsonFile) { obj ->
+                    obj.put("title", title)
+                    obj.put("summary", summary)
+                    obj.put("transcript", transcript)
+                    obj.put("aiStatus", "done")
+                }
+            } catch (e: Exception) {
+                updateJsonFields(jsonFile) { obj ->
+                    obj.put("aiStatus", "error")
+                    obj.put("aiError", e.message ?: "unknown")
+                }
+            }
         }
     }
 
